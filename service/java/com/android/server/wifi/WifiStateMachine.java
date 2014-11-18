@@ -295,7 +295,8 @@ public class WifiStateMachine extends StateMachine {
     private DhcpStateMachine mDhcpStateMachine;
     private boolean mDhcpActive = false;
 
-    private int mWifiLinkLayerStatsSupported = 4; // Temporary disable
+    //(gwl tmp modify)
+    private int mWifiLinkLayerStatsSupported = 0; // Temporary disable
 
     private final AtomicInteger mCountryCodeSequence = new AtomicInteger();
 
