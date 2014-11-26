@@ -4199,7 +4199,8 @@ public class WifiStateMachine extends StateMachine {
         mWifiMonitor.killSupplicant(mP2pSupported);
         mWifiNative.closeSupplicantConnection();
         sendSupplicantConnectionChangedBroadcast(false);
-        setWifiState(WIFI_STATE_DISABLED);
+        //setWifiState(WIFI_STATE_DISABLED);
+        setWifiState(WIFI_STATE_DISABLING);
     }
 
     void handlePreDhcpSetup() {
@@ -4714,6 +4715,7 @@ public class WifiStateMachine extends StateMachine {
         @Override
         public void enter() {
             mWifiNative.unloadDriver();
+            setWifiState(WIFI_STATE_DISABLED);
 
             if (mWifiP2pChannel == null) {
                 mWifiP2pChannel = new AsyncChannel();
