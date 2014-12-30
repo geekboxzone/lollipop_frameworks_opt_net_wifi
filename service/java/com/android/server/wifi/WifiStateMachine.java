@@ -245,7 +245,7 @@ public class WifiStateMachine extends StateMachine {
     /**
      * Delay between supplicant restarts upon failure to establish connection
      */
-    private static final int SUPPLICANT_RESTART_INTERVAL_MSECS = 5000;
+    private static final int SUPPLICANT_RESTART_INTERVAL_MSECS = 2000;
 
     /**
      * Number of times we attempt to restart supplicant

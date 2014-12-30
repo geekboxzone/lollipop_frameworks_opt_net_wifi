@@ -28,7 +28,7 @@
 #include "wifi_hal.h"
 #include "jni_helper.h"
 
-#define REPLY_BUF_SIZE 4096 // wpa_supplicant's maximum size.
+#define REPLY_BUF_SIZE 3*4096 // wpa_supplicant's maximum size.
 #define EVENT_BUF_SIZE 2048
 
 namespace android {
