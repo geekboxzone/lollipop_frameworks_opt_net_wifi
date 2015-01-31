@@ -245,7 +245,7 @@ public class WifiStateMachine extends StateMachine {
     /**
      * Delay between supplicant restarts upon failure to establish connection
      */
-    private static final int SUPPLICANT_RESTART_INTERVAL_MSECS = 2000;
+    private static final int SUPPLICANT_RESTART_INTERVAL_MSECS = 4000;
 
     /**
      * Number of times we attempt to restart supplicant
@@ -5030,7 +5030,7 @@ public class WifiStateMachine extends StateMachine {
                     break;
                 case CMD_STOP_SUPPLICANT_FAILED:
                     if (message.arg1 == mSupplicantStopFailureToken) {
-                        loge("Timed out on a supplicant stop, kill and proceed");
+                        log("Timed out on a supplicant stop, kill and proceed");
                         handleSupplicantConnectionLoss();
                         transitionTo(mInitialState);
                     }

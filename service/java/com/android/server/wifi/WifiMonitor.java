@@ -545,12 +545,14 @@ public class WifiMonitor {
 
         private final HashMap<String, WifiMonitor> mIfaceMap = new HashMap<String, WifiMonitor>();
         private boolean mConnected = false;
+        private boolean mSupplicantKilled = false;
         private WifiNative mWifiNative;
 
         private WifiMonitorSingleton() {
         }
 
         public synchronized void startMonitoring(String iface) {
+            mSupplicantKilled = false;
             WifiMonitor m = mIfaceMap.get(iface);
             if (m == null) {
                 Log.e(TAG, "startMonitor called with unknown iface=" + iface);
@@ -558,6 +560,10 @@ public class WifiMonitor {
             }
 
             Log.d(TAG, "startMonitoring(" + iface + ") with mConnected = " + mConnected);
+            if (iface.equals("p2p0") && mConnected == false) {
+                Log.d(TAG, "p2p0: mConnected state error, fix it...");	
+                mConnected = true;
+            }
 
             if (mConnected) {
                 m.mMonitoring = true;
@@ -617,6 +623,7 @@ public class WifiMonitor {
 
         public synchronized void killSupplicant(boolean p2pSupported) {
             WifiNative.killSupplicant(p2pSupported);
+            mSupplicantKilled = true;
             mConnected = false;
             for (WifiMonitor m : mIfaceMap.values()) {
                 m.mMonitoring = false;
@@ -660,6 +667,11 @@ public class WifiMonitor {
 
                     return false;
                 } else {
+                    if (mSupplicantKilled) {
+                        Log.d(TAG, "Supplicant is killed, stop waiting for wpa event.");
+                        return true;
+                    }
+
                     if (DBG) Log.d(TAG, "Dropping event because (" + iface + ") is stopped");
                     return false;
                 }
