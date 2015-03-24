@@ -1932,6 +1932,8 @@ public class WifiStateMachine extends StateMachine {
 
     /** return true iff scan request is accepted */
     private boolean startScanNative(int type, String freqs) {
+            mIsScanOngoing = true;
+            mIsFullScanOngoing = (freqs == null);
         if (mWifiNative.scan(type, freqs)) {
             mIsScanOngoing = true;
             mIsFullScanOngoing = (freqs == null);
