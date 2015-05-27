@@ -5137,7 +5137,7 @@ public class WifiStateMachine extends StateMachine {
             mWifiNative.setExternalSim(true);
 
             setRandomMacOui();
-            mWifiNative.enableAutoConnect(false);
+            mWifiNative.enableAutoConnect(true);
         }
 
         @Override
