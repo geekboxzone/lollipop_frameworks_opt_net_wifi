@@ -147,6 +147,9 @@ public class WifiStateMachine extends StateMachine {
 
     private static final int ONE_HOUR_MILLI = 1000 * 60 * 60;
 
+    private static final int WLAN_INTELLIGENT_SLEEP_STEP1_DELAY = 15 * 60 * 1000;
+    private static final int WLAN_INTELLIGENT_SLEEP_STEP2_DELAY = 1 * 60 * 1000;
+
     private static final String GOOGLE_OUI = "DA-A1-19";
 
     /* temporary debug flag - best network selection development */
@@ -393,6 +396,7 @@ public class WifiStateMachine extends StateMachine {
     private PendingIntent mScanIntent;
     private PendingIntent mDriverStopIntent;
     private PendingIntent mBatchedScanIntervalIntent;
+    private PendingIntent mWlanSleepIntent;;
 
     /* Tracks current frequency mode */
     private AtomicInteger mFrequencyBand = new AtomicInteger(WifiManager.WIFI_FREQUENCY_BAND_AUTO);
@@ -824,6 +828,10 @@ public class WifiStateMachine extends StateMachine {
     private static final int SCAN_REQUEST = 0;
     private static final String ACTION_START_SCAN =
         "com.android.server.WifiManager.action.START_SCAN";
+    private static final String ACTION_FIRST_ALARM = 
+	"com.android.server.WifiManager.action.WLAN_FIRST_ALARM";
+    private static final String ACTION_SECOND_ALARM = 
+	"com.android.server.WifiManager.action.WLAN_SECOND_ALARM";
 
     private static final String DELAYED_STOP_COUNTER = "DelayedStopCounter";
     private static final int DRIVER_STOP_REQUEST = 0;
@@ -982,14 +990,42 @@ public class WifiStateMachine extends StateMachine {
                         String action = intent.getAction();
 
                         if (action.equals(Intent.ACTION_SCREEN_ON)) {
+                            loge("ACTION_SCREEN_ON...");
+                            removeWlanSleepAlarm();
                             sendMessage(CMD_SCREEN_STATE_CHANGED, 1);
                         } else if (action.equals(Intent.ACTION_SCREEN_OFF)) {
+                            loge("ACTION_SCREEN_OFF...");
+                            if (Settings.Global.getInt(mContext.getContentResolver(),
+                                Settings.Global.WIFI_SLEEP_POLICY, 2)
+                                        == Settings.Global.WIFI_SLEEP_POLICY_INTELLIGENT)
+                                setWlanSleepAlarm(1);
                             sendMessage(CMD_SCREEN_STATE_CHANGED, 0);
                         } else if (action.equals(ACTION_REFRESH_BATCHED_SCAN)) {
                             startNextBatchedScanAsync();
                         }
                     }
                 }, filter);
+
+	IntentFilter wlan_filter = new IntentFilter();
+	wlan_filter.addAction(ACTION_FIRST_ALARM);
+	wlan_filter.addAction(ACTION_SECOND_ALARM);
+	mContext.registerReceiver(
+		new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        String action = intent.getAction();
+
+			if (action.equals(ACTION_FIRST_ALARM)) {
+                            loge("wifi intelligent sleep:'ACTION_FIRST_ALARM' broadcast received.");
+                            mWifiConfigStore.disableAllNetworks();
+                            setWlanSleepAlarm(2);
+			} else if (action.equals(ACTION_SECOND_ALARM)) {
+                            loge("wifi intelligent sleep:'ACTION_SECOND_ALARM' broadcast received."); 
+                            mWifiConfigStore.enableAllNetworks();
+                            setWlanSleepAlarm(3);
+			}
+		    }
+		}, wlan_filter);
 
         mContext.registerReceiver(
                 new BroadcastReceiver() {
@@ -1139,6 +1175,65 @@ public class WifiStateMachine extends StateMachine {
     private long mFrameworkScanIntervalMs = 10000;
 
     private AtomicInteger mDelayedScanCounter = new AtomicInteger();
+
+    private long mWifiIntelligentStartTime = 0;
+    private long getWlanWaitTime(int step) {
+        switch (step) {
+            case 1: return WLAN_INTELLIGENT_SLEEP_STEP1_DELAY;
+            case 2:
+                long currentMaillis = System.currentTimeMillis();
+                long difftime = currentMaillis - mWifiIntelligentStartTime;
+                if (difftime > 0 && difftime < 1800000)
+                    return 300000;
+                else if (difftime >= 1800000 && difftime < 3600000)
+                    return 900000;
+                else if (difftime >= 3600000 && difftime < 7200000)
+                    return 1800000;
+                else
+                    return 3600000;
+            case 3: return WLAN_INTELLIGENT_SLEEP_STEP2_DELAY;
+            default: return 0;
+        }
+    }
+
+    private void setWlanSleepAlarm(int step) {
+        Intent intent;
+	String action;
+        long waitTime;
+        if (syncGetWifiState() == WIFI_STATE_ENABLED) {
+            switch (step) {
+                case 1:  
+                    if (mNetworkInfo.getState() == NetworkInfo.State.CONNECTED) {
+                        mWifiIntelligentStartTime = System.currentTimeMillis();
+                        action = ACTION_FIRST_ALARM;
+                        waitTime = getWlanWaitTime(1);
+                        break;
+                    } else return;
+                case 2:
+                    action = ACTION_SECOND_ALARM;
+                    waitTime = getWlanWaitTime(2);
+                    break;
+                case 3:  
+                    action = ACTION_FIRST_ALARM;
+                    waitTime = getWlanWaitTime(3);
+                    break;
+		default: return;
+            }
+            intent = new Intent(action, null);
+            mWlanSleepIntent = PendingIntent.getBroadcast(mContext, 0, intent, 0);
+            mAlarmManager.set(AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + waitTime, mWlanSleepIntent);
+            loge("setWlanSleepAlarm(step["+step+"]: set alarm :" + waitTime/60000 + "(minutes)");
+	}
+        return;
+    }
+
+    private void removeWlanSleepAlarm() {
+	loge("removeWlanSleepAlarm...");
+	if (mWlanSleepIntent != null)
+            mAlarmManager.cancel(mWlanSleepIntent);
+        return;
+    }
 
     private void setScanAlarm(boolean enabled) {
         if (PDBG) {
