@@ -396,7 +396,7 @@ public class WifiStateMachine extends StateMachine {
     private PendingIntent mScanIntent;
     private PendingIntent mDriverStopIntent;
     private PendingIntent mBatchedScanIntervalIntent;
-    private PendingIntent mWlanSleepIntent;;
+    private PendingIntent mWlanSleepIntent = null;
 
     /* Tracks current frequency mode */
     private AtomicInteger mFrequencyBand = new AtomicInteger(WifiManager.WIFI_FREQUENCY_BAND_AUTO);
@@ -1230,8 +1230,10 @@ public class WifiStateMachine extends StateMachine {
 
     private void removeWlanSleepAlarm() {
 	loge("removeWlanSleepAlarm...");
-	if (mWlanSleepIntent != null)
+	    if (mWlanSleepIntent != null) {
             mAlarmManager.cancel(mWlanSleepIntent);
+            mWlanSleepIntent = null;
+        }
         return;
     }
 
@@ -6586,6 +6588,11 @@ public class WifiStateMachine extends StateMachine {
                      *
                      * Hence, sends a disconnect to supplicant first.
                      */
+
+                    if (mWlanSleepIntent != null) {
+                        logd("Wifi intelligent sleep is enabled, ignore CMD_AUTO_CONNECT.");
+                        break;
+                    }
                     didDisconnect = false;
                     if (getCurrentState() != mDisconnectedState) {
                         /** Supplicant will ignore the reconnect if we are currently associated,
@@ -7731,6 +7738,14 @@ public class WifiStateMachine extends StateMachine {
             mWifiConfigStore.enableAllNetworks();
 
             mLastDriverRoamAttempt = 0;
+
+			//gwl
+            loge("Wifi Connected, start to check if need to enable wifi intelligent sleep.");
+            if (mScreenOn == false && Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.WIFI_SLEEP_POLICY, 2)
+                        == Settings.Global.WIFI_SLEEP_POLICY_INTELLIGENT &&
+                            mWlanSleepIntent == null)
+                setWlanSleepAlarm(1);
         }
         @Override
         public boolean processMessage(Message message) {
