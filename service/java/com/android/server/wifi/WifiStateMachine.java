@@ -140,7 +140,7 @@ public class WifiStateMachine extends StateMachine {
 
     private static final String NETWORKTYPE = "WIFI";
     private static final String NETWORKTYPE_UNTRUSTED = "WIFI_UT";
-    private static boolean DBG = false;
+    private static boolean DBG = true;
     private static boolean VDBG = false;
     private static boolean VVDBG = false;
     private static boolean mLogMessages = false;
@@ -991,7 +991,10 @@ public class WifiStateMachine extends StateMachine {
 
                         if (action.equals(Intent.ACTION_SCREEN_ON)) {
                             loge("ACTION_SCREEN_ON...");
-                            removeWlanSleepAlarm();
+                            if (mWlanSleepIntent != null) {
+                                setDriverStart(true);
+                                removeWlanSleepAlarm();
+                            }
                             sendMessage(CMD_SCREEN_STATE_CHANGED, 1);
                         } else if (action.equals(Intent.ACTION_SCREEN_OFF)) {
                             loge("ACTION_SCREEN_OFF...");
@@ -1017,11 +1020,11 @@ public class WifiStateMachine extends StateMachine {
 
 			if (action.equals(ACTION_FIRST_ALARM)) {
                             loge("wifi intelligent sleep:'ACTION_FIRST_ALARM' broadcast received.");
-                            mWifiConfigStore.disableAllNetworks();
+                            setDriverStart(false);
                             setWlanSleepAlarm(2);
 			} else if (action.equals(ACTION_SECOND_ALARM)) {
                             loge("wifi intelligent sleep:'ACTION_SECOND_ALARM' broadcast received."); 
-                            mWifiConfigStore.enableAllNetworks();
+                            setDriverStart(true);
                             setWlanSleepAlarm(3);
 			}
 		    }
@@ -5620,12 +5623,18 @@ public class WifiStateMachine extends StateMachine {
                     int mode = message.arg1;
 
                     /* Already doing a delayed stop */
-                    if (mInDelayedStop) {
+                    if (mWlanSleepIntent == null && mInDelayedStop) {
                         if (DBG) log("Already in delayed stop");
                         break;
                     }
                     /* disconnect right now, but leave the driver running for a bit */
                     mWifiConfigStore.disableAllNetworks();
+                    if (mWlanSleepIntent != null) {
+                        log("wifi intelligent sleep: STOP WiFi Driver.");
+                        mDelayedStopCounter++;
+                        sendMessage(CMD_DELAYED_STOP_DRIVER, mDelayedStopCounter, 0);
+                        break;
+                    }
 
                     mInDelayedStop = true;
                     mDelayedStopCounter++;
@@ -6588,11 +6597,6 @@ public class WifiStateMachine extends StateMachine {
                      *
                      * Hence, sends a disconnect to supplicant first.
                      */
-
-                    if (mWlanSleepIntent != null) {
-                        logd("Wifi intelligent sleep is enabled, ignore CMD_AUTO_CONNECT.");
-                        break;
-                    }
                     didDisconnect = false;
                     if (getCurrentState() != mDisconnectedState) {
                         /** Supplicant will ignore the reconnect if we are currently associated,
