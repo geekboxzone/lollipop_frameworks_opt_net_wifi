@@ -5060,6 +5060,7 @@ public class WifiStateMachine extends StateMachine {
             logStateAndMessage(message, getClass().getSimpleName());
             switch (message.what) {
                 case CMD_START_SUPPLICANT:
+                    maybeRegisterNetworkFactory();
                     if (mWifiNative.loadDriver()) {
                         try {
                             mNwService.wifiFirmwareReload(mInterfaceName, "STA");
