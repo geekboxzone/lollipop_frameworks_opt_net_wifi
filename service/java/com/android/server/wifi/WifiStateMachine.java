@@ -1216,7 +1216,7 @@ public class WifiStateMachine extends StateMachine {
         if (syncGetWifiState() == WIFI_STATE_ENABLED) {
             switch (step) {
                 case 1:  
-                    if (mNetworkInfo.getState() == NetworkInfo.State.CONNECTED) {
+                    if (onemore || mNetworkInfo.getState() == NetworkInfo.State.CONNECTED) {
                         if (onemore)
                             waitTime = getWlanWaitTime(3);
                         else {
@@ -5664,6 +5664,10 @@ public class WifiStateMachine extends StateMachine {
                     /* Already doing a delayed stop */
                     if (mWlanSleepIntent == null && mInDelayedStop) {
                         if (DBG) log("Already in delayed stop");
+                        break;
+                    }
+                    if (mWlanSleepIntent != null && getWifiState() == 0) {
+                        log("Wifi driver is disabled STOP. Ignore CMD_STOP_DRIVER cmd.");
                         break;
                     }
                     /* disconnect right now, but leave the driver running for a bit */
