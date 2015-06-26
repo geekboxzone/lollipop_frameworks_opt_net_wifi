@@ -112,6 +112,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.*;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -991,17 +992,19 @@ public class WifiStateMachine extends StateMachine {
 
                         if (action.equals(Intent.ACTION_SCREEN_ON)) {
                             loge("ACTION_SCREEN_ON...");
+                            startSleep = false;
                             if (mWlanSleepIntent != null) {
                                 setDriverStart(true);
                                 removeWlanSleepAlarm();
                             }
                             sendMessage(CMD_SCREEN_STATE_CHANGED, 1);
                         } else if (action.equals(Intent.ACTION_SCREEN_OFF)) {
-                            loge("ACTION_SCREEN_OFF...");
+                            loge("ACTION_SCREEN_OFF...");                            
+                            startSleep = true;
                             if (Settings.Global.getInt(mContext.getContentResolver(),
                                 Settings.Global.WIFI_SLEEP_POLICY, 2)
                                         == Settings.Global.WIFI_SLEEP_POLICY_INTELLIGENT)
-                                setWlanSleepAlarm(1);
+                                setWlanSleepAlarm(1, false);
                             sendMessage(CMD_SCREEN_STATE_CHANGED, 0);
                         } else if (action.equals(ACTION_REFRESH_BATCHED_SCAN)) {
                             startNextBatchedScanAsync();
@@ -1009,26 +1012,32 @@ public class WifiStateMachine extends StateMachine {
                     }
                 }, filter);
 
-	IntentFilter wlan_filter = new IntentFilter();
-	wlan_filter.addAction(ACTION_FIRST_ALARM);
-	wlan_filter.addAction(ACTION_SECOND_ALARM);
-	mContext.registerReceiver(
-		new BroadcastReceiver() {
-                    @Override
-                    public void onReceive(Context context, Intent intent) {
-                        String action = intent.getAction();
+        IntentFilter wlan_filter = new IntentFilter();
+        wlan_filter.addAction(ACTION_FIRST_ALARM);
+        wlan_filter.addAction(ACTION_SECOND_ALARM);
+        mContext.registerReceiver(
+        new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
 
-			if (action.equals(ACTION_FIRST_ALARM)) {
-                            loge("wifi intelligent sleep:'ACTION_FIRST_ALARM' broadcast received.");
-                            setDriverStart(false);
-                            setWlanSleepAlarm(2);
-			} else if (action.equals(ACTION_SECOND_ALARM)) {
-                            loge("wifi intelligent sleep:'ACTION_SECOND_ALARM' broadcast received."); 
-                            setDriverStart(true);
-                            setWlanSleepAlarm(3);
-			}
-		    }
-		}, wlan_filter);
+                if (action.equals(ACTION_FIRST_ALARM)) {
+                    loge("wifi intelligent sleep:'ACTION_FIRST_ALARM' broadcast received.");
+                    if (startSleep && getWifiState() == 0) {
+                        loge("Wifi intelligent sleep: wifi disable stop, delay to STOP driver.");
+                        setWlanSleepAlarm(1, true);
+                    } else {
+                        setDriverStart(false);
+                        setWlanSleepAlarm(2, false);
+                        startSleep = false;
+                    }
+                } else if (action.equals(ACTION_SECOND_ALARM)) {
+                    loge("wifi intelligent sleep:'ACTION_SECOND_ALARM' broadcast received."); 
+                    setDriverStart(true);
+                    setWlanSleepAlarm(3, false);
+                }
+            }
+        }, wlan_filter);
 
         mContext.registerReceiver(
                 new BroadcastReceiver() {
@@ -1180,6 +1189,7 @@ public class WifiStateMachine extends StateMachine {
     private AtomicInteger mDelayedScanCounter = new AtomicInteger();
 
     private long mWifiIntelligentStartTime = 0;
+    private boolean startSleep = false;
     private long getWlanWaitTime(int step) {
         switch (step) {
             case 1: return WLAN_INTELLIGENT_SLEEP_STEP1_DELAY;
@@ -1199,7 +1209,7 @@ public class WifiStateMachine extends StateMachine {
         }
     }
 
-    private void setWlanSleepAlarm(int step) {
+    private void setWlanSleepAlarm(int step, boolean onemore) {
         Intent intent;
 	String action;
         long waitTime;
@@ -1207,9 +1217,13 @@ public class WifiStateMachine extends StateMachine {
             switch (step) {
                 case 1:  
                     if (mNetworkInfo.getState() == NetworkInfo.State.CONNECTED) {
-                        mWifiIntelligentStartTime = System.currentTimeMillis();
+                        if (onemore)
+                            waitTime = getWlanWaitTime(3);
+                        else {
+                            mWifiIntelligentStartTime = System.currentTimeMillis();
+                            waitTime = getWlanWaitTime(1);
+                        }
                         action = ACTION_FIRST_ALARM;
-                        waitTime = getWlanWaitTime(1);
                         break;
                     } else return;
                 case 2:
@@ -1238,6 +1252,30 @@ public class WifiStateMachine extends StateMachine {
             mWlanSleepIntent = null;
         }
         return;
+    }
+
+    private int getWifiState() {
+        int state = 1;
+        String wifistatenode = "/sys/module/iwlwifi/parameters/enable_stop";
+
+        File file = new File(wifistatenode);
+        if (!file.exists()) {
+            loge("wifi intelligent sleep: file '"+ wifistatenode + "' isn't exist!");
+            return state;
+        }
+
+        try {
+            FileReader fw = new FileReader(wifistatenode);
+            state = fw.read() - 48;
+            if (state != 0 && state != 1)
+                state = 1;
+            fw.close();
+            loge("wifi intelligent sleep: wifi intelligent sleep: get wifi state:" + state);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return state;
     }
 
     private void setScanAlarm(boolean enabled) {
@@ -7750,7 +7788,7 @@ public class WifiStateMachine extends StateMachine {
                     Settings.Global.WIFI_SLEEP_POLICY, 2)
                         == Settings.Global.WIFI_SLEEP_POLICY_INTELLIGENT &&
                             mWlanSleepIntent == null)
-                setWlanSleepAlarm(1);
+                setWlanSleepAlarm(1, false);
         }
         @Override
         public boolean processMessage(Message message) {
