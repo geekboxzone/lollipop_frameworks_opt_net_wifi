@@ -716,6 +716,7 @@ public class WifiStateMachine extends StateMachine {
     private final int mDriverStopDelayMs;
     private int mDelayedStopCounter;
     private boolean mInDelayedStop = false;
+    private boolean isSofia;
 
     // sometimes telephony gives us this data before boot is complete and we can't store it
     // until after, so the write is deferred
@@ -833,6 +834,8 @@ public class WifiStateMachine extends StateMachine {
 	"com.android.server.WifiManager.action.WLAN_FIRST_ALARM";
     private static final String ACTION_SECOND_ALARM = 
 	"com.android.server.WifiManager.action.WLAN_SECOND_ALARM";
+    private static final String ACTION_NETWORK_CHECKER = 
+	"com.android.server.WifiManager.action.NETWORK_CHECKER";
 
     private static final String DELAYED_STOP_COUNTER = "DelayedStopCounter";
     private static final int DRIVER_STOP_REQUEST = 0;
@@ -908,6 +911,8 @@ public class WifiStateMachine extends StateMachine {
 
         IBinder s1 = ServiceManager.getService(Context.WIFI_P2P_SERVICE);
         mWifiP2pServiceImpl = (WifiP2pServiceImpl)IWifiP2pManager.Stub.asInterface(s1);
+
+        isSofia = "sofia3gr".equals(SystemProperties.get("ro.board.platform", "unknown"));
 
         mNetworkInfo.setIsAvailable(false);
         mLastBssid = null;
@@ -1043,6 +1048,15 @@ public class WifiStateMachine extends StateMachine {
                 new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
+                        doWifiOperationChecker();
+                    }
+                },
+                new IntentFilter(ACTION_NETWORK_CHECKER));
+
+        mContext.registerReceiver(
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
                        int counter = intent.getIntExtra(DELAYED_STOP_COUNTER, 0);
                        sendMessage(CMD_DELAYED_STOP_DRIVER, counter, 0);
                     }
@@ -1173,6 +1187,115 @@ public class WifiStateMachine extends StateMachine {
 
     public int getAllowScansWithTraffic() {
         return mWifiConfigStore.alwaysEnableScansWhileAssociated;
+    }
+
+    /*
+     * wifi operation checker (gwl)
+     */
+    public boolean pingServer(String server, int timeout) {   
+        Runtime r = Runtime.getRuntime();
+  
+        String pingCommand = "ping -c 1 -w " + timeout + " " +server;
+        try {
+            java.lang.Process p = r.exec(pingCommand);
+            if (p == null) {
+                return false;
+            }
+            int status = p.waitFor();
+            //loge("execute command :" + pingCommand + ", status : " + status);
+            if (status == 0) {
+                return true;
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return false;
+    }
+
+    private static final int NETWORK_CHECKING_INTERVAL = 10 * 1000;
+    String check_service = null;
+    private static int network_error_count = 0;
+    private void doWifiOperationChecker() {
+        int wifi_checker_time = NETWORK_CHECKING_INTERVAL;
+
+        if (!isSofia || !mScreenOn || network_error_count >= 2 ||
+                mNetworkInfo.getState() != NetworkInfo.State.CONNECTED) {
+            loge("wifi network checker is off.");
+            check_service = null;
+            return;
+        }
+        ConnectivityManager manager = (ConnectivityManager) mContext.getSystemService(Context.CONNECTIVITY_SERVICE);    
+        NetworkInfo info = manager.getActiveNetworkInfo();  
+        if (info != null && info.isAvailable()) {
+            //loge("Wifi network is available.");
+            if (check_service == null) {
+                String gateway = null;
+                String dns = null;
+                DhcpResults mDhcpResult = syncGetDhcpResults();
+                if (mDhcpResult != null) {
+                    String s = mDhcpResult.gateway.toString();
+                    int space = s.indexOf('/');
+                    gateway = s.substring(space + 1);
+                    s = mDhcpResult.dnsServers.toString();
+                    space = s.indexOf('/');
+                    int last = s.indexOf(',');
+                    if (last == -1)
+                        last = s.indexOf(']');
+                    dns = s.substring(space + 1, last);
+                }
+                loge("gateway:"+gateway + ", dns:"+dns);
+                if (gateway != null && pingServer(gateway, 3)) {
+                    check_service = gateway;
+                } else {
+                    if (dns != null && pingServer(dns, 3)) {
+                        check_service = dns;
+                    } else {
+                        network_error_count = 5;
+                        loge("network checker cannot get 'check_service'. turn off checker!");
+                        return;
+                    }
+                }
+                loge("check_service:"+check_service);
+            }
+            
+            if (check_service != null && pingServer(check_service, 3)) {
+                network_error_count = 0;
+                //loge("internet connection is OK");
+            } else {
+                InetAddress Server = null;
+                try {
+                    Server = InetAddress.getByName("www.intel.com");
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+                loge("get dns server ip:" + Server);
+                if (Server == null) {
+                    network_error_count++;
+                    loge("internet connection is error!!!");
+                    if (!mWifiConfigStore.isUsingStaticIp(mLastNetworkId) &&
+                            mNetworkInfo.getState() == NetworkInfo.State.CONNECTED) {
+                        if (network_error_count > 1) {
+                            loge("try to reassociate to recover network.");
+                            disconnectCommand();
+                            return;
+                        } else {
+                            wifi_checker_time = 3 * NETWORK_CHECKING_INTERVAL;
+                            loge("try to renew ip to recover network.");
+                            renewDhcp();
+                        }
+                    } else {
+                        return;
+                    }
+                } else {
+                    network_error_count = 0;
+                }
+            }
+        }
+
+        Intent intent = new Intent(ACTION_NETWORK_CHECKER, null);
+        PendingIntent mNetworkCheckerIntent = PendingIntent.getBroadcast(mContext, 0, intent, 0);
+        mAlarmManager.set(AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + wifi_checker_time, mNetworkCheckerIntent);
     }
 
     /*
@@ -3172,6 +3295,7 @@ public class WifiStateMachine extends StateMachine {
         cancelDelayedScan();
 
         if (screenOn) {
+            doWifiOperationChecker();
             setScanAlarm(false);
             clearBlacklist();
 
@@ -5138,6 +5262,7 @@ public class WifiStateMachine extends StateMachine {
                         if(mWifiNative.startSupplicant(mP2pSupported)) {
                             setWifiState(WIFI_STATE_ENABLING);
                             if (DBG) log("Supplicant start successful");
+                            network_error_count = 0;
                             mWifiMonitor.startMonitoring();
                             transitionTo(mSupplicantStartingState);
                         } else {
@@ -7413,6 +7538,7 @@ public class WifiStateMachine extends StateMachine {
                         // it means we were not able to reconnect within the alloted time
                         // = LINK_FLAPPING_DEBOUNCE_MSEC
                         // and thus, trigger a real disconnect
+                        mWifiNative.disconnect();
                         handleNetworkDisconnect();
                         transitionTo(mDisconnectedState);
                     }
@@ -7787,6 +7913,7 @@ public class WifiStateMachine extends StateMachine {
             mLastDriverRoamAttempt = 0;
 
 			//gwl
+            doWifiOperationChecker();
             loge("Wifi Connected, start to check if need to enable wifi intelligent sleep.");
             if (mScreenOn == false && Settings.Global.getInt(mContext.getContentResolver(),
                     Settings.Global.WIFI_SLEEP_POLICY, 2)
