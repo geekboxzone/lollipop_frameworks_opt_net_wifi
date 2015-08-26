@@ -1233,6 +1233,10 @@ public class WifiStateMachine extends StateMachine {
                 String dns = null;
                 DhcpResults mDhcpResult = syncGetDhcpResults();
                 if (mDhcpResult != null) {
+                    if (mDhcpResult.gateway == null || mDhcpResult.dnsServers == null) {
+                        loge("gateway || dnsServers == null, turn off network checker.");
+                        return;
+                    }
                     String s = mDhcpResult.gateway.toString();
                     int space = s.indexOf('/');
                     gateway = s.substring(space + 1);
