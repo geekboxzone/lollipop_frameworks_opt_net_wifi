@@ -3151,7 +3151,8 @@ public class WifiConfigStore extends IpConfigStore {
             if (!doNotAdd && (link.scanResultCache != null) && (link.scanResultCache.size() <= 6)) {
                 for (String bssid : link.scanResultCache.keySet()) {
                     if (result.BSSID.regionMatches(true, 0, bssid, 0, 16)
-                            && SSID.regionMatches(false, 0, link.SSID, 0, 4)) {
+                            && SSID.equals(link.SSID)) {
+                            //&& SSID.regionMatches(false, 0, link.SSID, 0, 4)) {
                         // If first 16 ascii characters of BSSID matches, and first 3
                         // characters of SSID match, we assume this is a home setup
                         // and thus we will try to transfer the password from the known
