@@ -1727,8 +1727,10 @@ public final class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         // always defer the invocation request and return
                         // "information is currently unable" error.
                         // So, try another way to connect for interoperability.
-                        mSavedPeerConfig.netId = WifiP2pGroup.PERSISTENT_NET_ID;
-                        p2pConnectWithPinDisplay(mSavedPeerConfig);
+                        // modify to work compatibly for some WFD sink devices which unsupport invitation.(gwl)
+                        //mSavedPeerConfig.netId = WifiP2pGroup.PERSISTENT_NET_ID;
+                        //p2pConnectWithPinDisplay(mSavedPeerConfig);
+                        transitionTo(mProvisionDiscoveryState);
                     } else if (status == P2pStatus.NO_COMMON_CHANNEL) {
                         transitionTo(mFrequencyConflictState);
                     } else {
