@@ -35,12 +35,17 @@ import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.app.backup.IBackupManager;
+import android.app.AlertDialog;
+import android.view.WindowManager;
 import android.bluetooth.BluetoothAdapter;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.DialogInterface;
+import android.content.DialogInterface.OnClickListener;
+import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.net.ConnectivityManager;
 import android.net.DhcpResults;
@@ -836,6 +841,8 @@ public class WifiStateMachine extends StateMachine {
 	"com.android.server.WifiManager.action.WLAN_SECOND_ALARM";
     private static final String ACTION_NETWORK_CHECKER = 
 	"com.android.server.WifiManager.action.NETWORK_CHECKER";
+    private static final String ACTION_WIFI_OFF_FOR_POWER_SAVE =
+        "com.android.server.WifiManager.action.WIFI_OFF_FOR_POWER_SAVE";
 
     private static final String DELAYED_STOP_COUNTER = "DelayedStopCounter";
     private static final int DRIVER_STOP_REQUEST = 0;
@@ -1052,6 +1059,15 @@ public class WifiStateMachine extends StateMachine {
                     }
                 },
                 new IntentFilter(ACTION_NETWORK_CHECKER));
+
+        mContext.registerReceiver(
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        processWifiOffAsk();
+                    }
+                },
+                new IntentFilter(ACTION_WIFI_OFF_FOR_POWER_SAVE));
 
         mContext.registerReceiver(
                 new BroadcastReceiver() {
@@ -1300,6 +1316,57 @@ public class WifiStateMachine extends StateMachine {
         PendingIntent mNetworkCheckerIntent = PendingIntent.getBroadcast(mContext, 0, intent, 0);
         mAlarmManager.set(AlarmManager.RTC_WAKEUP,
                 System.currentTimeMillis() + wifi_checker_time, mNetworkCheckerIntent);
+    }
+
+    private int noSavedInScanResultCount = 0;
+    public void WifiPowerSaveChecker() {
+        if ("0".equals(SystemProperties.get("wifi.powersaver.enable", "0")) ||
+                mNetworkInfo.getState() == NetworkInfo.State.CONNECTED || mP2pConnected.get()) {
+            noSavedInScanResultCount = 0;
+            return;
+        }
+        if (mWifiConfigStore.getConfiguredNetworks().size() != 0) {
+            for(ScanResult result: mScanResults) {
+                for (WifiConfiguration conf : mWifiConfigStore.getConfiguredNetworks()) {
+                    if (conf != null && conf.SSID.equals("\"" + result.SSID + "\"")) {
+                        loge("WifiPowerSaveChecker found a saved AP from scanresult:" + result.SSID);
+                        noSavedInScanResultCount = 0;
+                        return;
+                    }
+                }
+            }
+        }
+        noSavedInScanResultCount++;
+        loge("WifiPowerSaveChecker no available AP found. Count = " + noSavedInScanResultCount);
+        if (noSavedInScanResultCount >= 20) {
+            noSavedInScanResultCount = 0;
+            if (syncGetWifiState() == WIFI_STATE_ENABLED && mNetworkInfo.getState() 
+                    != NetworkInfo.State.CONNECTED) {
+                Intent intent = new Intent(ACTION_WIFI_OFF_FOR_POWER_SAVE);
+                intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            }
+        }
+        return;
+    }
+
+    private void processWifiOffAsk() {
+        Resources r = Resources.getSystem();
+        SystemProperties.set("wifi.powersaver.enable", "0");
+        AlertDialog dialog = new AlertDialog.Builder(mContext)
+            .setTitle(r.getString(R.string.wifi_power_saver_title))
+            .setMessage(r.getString(R.string.wifi_power_saver_message))
+            .setPositiveButton("OK", new OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            WifiManager mWifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
+                            if (mWifiManager != null)
+                                mWifiManager.setWifiEnabled(false);
+                        }
+                    })
+            .setNegativeButton("Cancel", null)  
+            .create();
+        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        dialog.show();
     }
 
     /*
@@ -5437,6 +5504,8 @@ public class WifiStateMachine extends StateMachine {
                     closeRadioScanStats();
                     noteScanEnd();
                     setScanResults();
+                    if (isSofia)
+                        WifiPowerSaveChecker();
                     if (mIsFullScanOngoing || mSendScanResultsBroadcast) {
                         /* Just updated results from full scan, let apps know about this */
                         sendScanResultsAvailableBroadcast();
@@ -7918,6 +7987,7 @@ public class WifiStateMachine extends StateMachine {
 
 			//gwl
             doWifiOperationChecker();
+            SystemProperties.set("wifi.powersaver.enable", "1");
             loge("Wifi Connected, start to check if need to enable wifi intelligent sleep.");
             if (mScreenOn == false && Settings.Global.getInt(mContext.getContentResolver(),
                     Settings.Global.WIFI_SLEEP_POLICY, 2)
